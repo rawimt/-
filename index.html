@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>備品申請</title>
+  <style>
+    :root { --bg:#f6f6f6; --card:#fff; --line:#ddd; --txt:#111; --muted:#666; }
+    body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial; background:var(--bg); color:var(--txt);}
+    header{ position:sticky; top:0; background:#000; color:#fff; padding:12px 14px; font-weight:800; display:flex; justify-content:space-between; align-items:center; gap:10px;}
+    header small{ font-weight:600; opacity:.85; }
+    .wrap{ max-width:920px; margin:0 auto; padding:12px; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px; margin:12px 0; }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .row > *{ flex:1; min-width:180px; }
+    label{ font-size:12px; color:var(--muted); font-weight:700; display:block; margin-bottom:6px; }
+    input,select,textarea{ width:100%; box-sizing:border-box; padding:10px; border-radius:12px; border:1px solid #cfcfcf; background:#fff; font-size:16px; }
+    textarea{ min-height:70px; resize:vertical; }
+    .btn{ padding:12px 14px; border-radius:12px; border:1px solid #000; background:#000; color:#fff; font-weight:900; }
+    .btnGhost{ padding:12px 14px; border-radius:12px; border:1px solid var(--line); background:#fff; font-weight:800; }
+    .btnDanger{ padding:12px 14px; border-radius:12px; border:1px solid #b00020; background:#b00020; color:#fff; font-weight:900; }
+    .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:10px; }
+    .item{ text-align:left; border:1px solid var(--line); background:#fff; border-radius:14px; padding:12px; }
+    .item .name{ font-weight:900; font-size:16px; }
+    .item .meta{ font-size:12px; color:var(--muted); margin-top:6px; }
+    .pill{ display:inline-block; padding:4px 8px; border:1px solid var(--line); border-radius:999px; font-size:12px; margin-left:6px; }
+    .warn{ border-color:#f0b400; }
+    .toast{ position:fixed; left:12px; right:12px; bottom:12px; max-width:560px; margin:0 auto; background:#000; color:#fff; padding:12px; border-radius:14px; text-align:center; }
+    .modalBg{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; padding:12px;}
+    .modal{ width:min(560px,100%); background:#fff; border-radius:16px; border:1px solid var(--line); padding:14px; }
+    .hr{ height:1px; background:var(--line); margin:12px 0; }
+    .tiny{ font-size:12px; color:var(--muted); }
+    .listRow{ border:1px solid var(--line); border-radius:14px; padding:12px; background:#fff; display:flex; gap:10px; align-items:flex-start; }
+    .listRow .main{ flex:1; }
+    .right{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
+  </style>
+</head>
+<body>
+<header>
+  <div>備品申請 <small id="modeText"></small></div>
+  <div class="right">
+    <button class="btnGhost" onclick="toggleView()">画面切替</button>
+    <button class="btnGhost" onclick="openSettings()">設定</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <section id="reqView">
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>申請者</label>
+          <select id="userSelect"></select>
+        </div>
+        <div>
+          <label>カテゴリ</label>
+          <select id="catSelect"></select>
+        </div>
+        <div>
+          <label>検索</label>
+          <input id="q" placeholder="備品名で検索" />
+        </div>
+      </div>
+      <div class="tiny" style="margin-top:8px;">
+        連打防止：同一備品の申請は <b id="cooldownText"></b> 秒待ち（端末内）
+      </div>
+    </div>
+
+    <div class="card" id="lowStockCard" style="display:none;">
+      <div style="font-weight:900;">発注点以下（注意）</div>
+      <div class="tiny" style="margin-top:6px;">タップで申請フォームを開きます</div>
+      <div id="lowStockChips" class="row" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="grid" id="itemsGrid"></div>
+  </section>
+
+  <section id="adminView" style="display:none;">
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>並び</label>
+          <select id="sortMode">
+            <option value="new">新しい順</option>
+            <option value="needed">希望納期が近い順</option>
+            <option value="priority">優先度順</option>
+          </select>
+        </div>
+        <div>
+          <label>表示</label>
+          <select id="statusFilter">
+            <option value="未発注">未発注</option>
+            <option value="発注済み">発注済み</option>
+            <option value="全て">全て</option>
+          </select>
+        </div>
+        <div>
+          <label>操作</label>
+          <div class="row" style="margin:0;">
+            <button class="btnGhost" onclick="exportCSV()">CSV</button>
+            <button class="btnDanger" onclick="resetAll()">全削除</button>
+          </div>
+        </div>
+      </div>
+      <div class="tiny">※ 全削除は戻せません（iPad内データ）</div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:900;">低在庫（発注点以下）</div>
+      <div class="tiny" style="margin-top:6px;">在庫の数は“参考”。正確にしたい時だけ設定で調整してください。</div>
+      <div id="lowStockList" style="margin-top:10px; display:grid; gap:10px;"></div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:900;">申請一覧</div>
+      <div id="reqList" style="margin-top:10px; display:grid; gap:10px;"></div>
+    </div>
+  </section>
+</div>
+
+<div class="modalBg" id="modalBg" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div style="font-size:16px; font-weight:900;" id="mTitle"></div>
+    <div class="tiny" id="mMeta" style="margin-top:6px;"></div>
+    <div class="hr"></div>
+
+    <div class="row">
+      <div>
+        <label>数量</label>
+        <input type="number" id="mQty" min="1" value="1" inputmode="numeric"/>
+      </div>
+      <div>
+        <label>優先度</label>
+        <select id="mPriority">
+          <option>低</option><option selected>中</option><option>高</option><option>緊急</option>
+        </select>
+      </div>
+      <div>
+        <label>希望納期</label>
+        <input type="date" id="mNeeded"/>
+      </div>
+    </div>
+
+    <div style="margin-top:8px;">
+      <label>メモ</label>
+      <textarea id="mNote" placeholder="例：今日中に必要 / メーカー指定など"></textarea>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <button class="btnGhost" onclick="closeModal()">キャンセル</button>
+      <button class="btn" id="mSubmit" onclick="submitReq()">申請する</button>
+    </div>
+  </div>
+</div>
+
+<div class="modalBg" id="settingsBg" onclick="closeSettings()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div style="font-size:16px; font-weight:900;">設定</div>
+    <div class="tiny" style="margin-top:6px;">社員・備品・在庫閾値をここで編集できます（iPad内保存）</div>
+    <div class="hr"></div>
+
+    <div class="row">
+      <div>
+        <label>連打防止（秒）</label>
+        <input id="sCooldown" type="number" min="1" value="10" />
+      </div>
+      <div>
+        <label>在庫表示を使う</label>
+        <select id="sUseStock">
+          <option value="1">使う（参考）</option>
+          <option value="0">使わない</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="hr"></div>
+
+    <div>
+      <label>社員（1行1名）</label>
+      <textarea id="sUsers"></textarea>
+    </div>
+
+    <div style="margin-top:10px;">
+      <label>備品（CSV形式：カテゴリ,備品名,単位,在庫,発注点,推奨発注数）</label>
+      <textarea id="sItems" placeholder="例：事務,コピー用紙A4,冊,3,2,5"></textarea>
+      <div class="tiny">※ 在庫は“参考”。合わなくても運用は回ります。</div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <button class="btnGhost" onclick="closeSettings()">閉じる</button>
+      <button class="btn" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" style="display:none;" onclick="hideToast()"></div>
+
+<script>
+/** ★ 永続ストレージを要求（消えにくくする） */
+(async () => {
+  try {
+    if (navigator.storage && navigator.storage.persist) {
+      await navigator.storage.persist();
+    }
+  } catch {}
+})();
+
+/** ====== storage ====== */
+const KEY = "supplies_app_v1";
+const defaultData = {
+  settings: { cooldownSec: 10, useStock: true },
+  users: ["田中","佐藤","鈴木"],
+  items: [
+    {id: uid(), category:"事務", name:"コピー用紙A4", unit:"冊", stock:3, reorderPoint:2, reorderQty:5, active:true},
+    {id: uid(), category:"衛生", name:"トイレットペーパー", unit:"袋", stock:1, reorderPoint:2, reorderQty:4, active:true},
+    {id: uid(), category:"清掃", name:"洗剤", unit:"本", stock:2, reorderPoint:1, reorderQty:2, active:true},
+  ],
+  requests: []
+};
+
+function loadData(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(!raw) return structuredClone(defaultData);
+    const d = JSON.parse(raw);
+    return normalize(d);
+  }catch(e){
+    return structuredClone(defaultData);
+  }
+}
+function saveData(){ localStorage.setItem(KEY, JSON.stringify(state)); }
+function normalize(d){
+  if(!d.settings) d.settings = structuredClone(defaultData.settings);
+  if(!Array.isArray(d.users)) d.users = structuredClone(defaultData.users);
+  if(!Array.isArray(d.items)) d.items = structuredClone(defaultData.items);
+  if(!Array.isArray(d.requests)) d.requests = [];
+  d.items = d.items.map(x=>({
+    id: x.id || uid(),
+    category: x.category || "その他",
+    name: x.name || "未設定",
+    unit: x.unit || "個",
+    stock: num(x.stock,0),
+    reorderPoint: num(x.reorderPoint,0),
+    reorderQty: num(x.reorderQty,1),
+    active: x.active !== false
+  }));
+  d.requests = d.requests.map(r=>({
+    id: r.id || uid(),
+    itemId: r.itemId,
+    itemName: r.itemName,
+    unit: r.unit || "個",
+    qty: num(r.qty,1),
+    user: r.user || "",
+    priority: r.priority || "中",
+    needed: r.needed || "",
+    note: r.note || "",
+    status: r.status || "未発注",
+    createdAt: r.createdAt || Date.now()
+  }));
+  return d;
+}
+function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
+function num(v,def){ const n = Number(v); return Number.isFinite(n)? n : def; }
+
+/** ====== state ====== */
+let state = loadData();
+let view = "req";
+let openItemId = null;
+
+/** ====== ui helpers ====== */
+function showToast(msg){
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(hideToast, 2500);
+}
+function hideToast(){ document.getElementById("toast").style.display="none"; }
+
+function setModeText(){
+  document.getElementById("modeText").textContent = view === "req" ? "（申請）" : "（管理）";
+}
+function toggleView(){
+  view = view === "req" ? "admin" : "req";
+  document.getElementById("reqView").style.display = view==="req" ? "block":"none";
+  document.getElementById("adminView").style.display = view==="admin" ? "block":"none";
+  setModeText();
+  renderAll();
+}
+
+function renderAll(){
+  renderSelectors();
+  renderItems();
+  renderLowStock();
+  renderAdmin();
+  document.getElementById("cooldownText").textContent = state.settings.cooldownSec;
+}
+function renderSelectors(){
+  const u = document.getElementById("userSelect");
+  const cur = u.value || state.users[0] || "";
+  u.innerHTML = state.users.map(name=>`<option>${esc(name)}</option>`).join("");
+  u.value = cur || (state.users[0] || "");
+
+  const cats = Array.from(new Set(state.items.filter(i=>i.active).map(i=>i.category)));
+  const c = document.getElementById("catSelect");
+  const curC = c.value || "すべて";
+  c.innerHTML = ["すべて", ...cats].map(x=>`<option>${esc(x)}</option>`).join("");
+  c.value = curC;
+}
+function renderItems(){
+  const q = (document.getElementById("q").value || "").trim().toLowerCase();
+  const cat = document.getElementById("catSelect").value;
+  const useStock = !!state.settings.useStock;
+
+  const items = state.items
+    .filter(i=>i.active)
+    .filter(i=>cat==="すべて" ? true : i.category===cat)
+    .filter(i=>!q ? true : i.name.toLowerCase().includes(q));
+
+  const grid = document.getElementById("itemsGrid");
+  grid.innerHTML = items.map(i=>{
+    const low = useStock && i.stock <= i.reorderPoint;
+    const stockText = useStock ? `在庫 ${i.stock}${esc(i.unit)}` : `在庫表示なし`;
+    const meta = `${esc(i.category)} ・ ${stockText} ・ 発注点 ${i.reorderPoint}${esc(i.unit)} ・ 推奨 ${i.reorderQty}${esc(i.unit)}`;
+    return `
+      <button class="item ${low ? "warn":""}" onclick="openModal('${i.id}')">
+        <div class="name">${esc(i.name)} ${low ? '<span class="pill warn">注意</span>': ''}</div>
+        <div class="meta">${meta}</div>
+      </button>
+    `;
+  }).join("");
+}
+function renderLowStock(){
+  const useStock = !!state.settings.useStock;
+  const low = useStock ? state.items.filter(i=>i.active && i.stock <= i.reorderPoint) : [];
+  const card = document.getElementById("lowStockCard");
+  const chips = document.getElementById("lowStockChips");
+
+  if(!useStock || low.length===0){
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+  chips.innerHTML = low.slice(0,10).map(i=>{
+    return `<button class="btnGhost" style="border-radius:999px; width:auto;" onclick="openModal('${i.id}')">${esc(i.name)}（${i.stock}${esc(i.unit)}）</button>`;
+  }).join("") + (low.length>10 ? `<span class="tiny">…他 ${low.length-10}件</span>` : "");
+}
+function renderAdmin(){
+  if(view!=="admin") return;
+
+  const useStock = !!state.settings.useStock;
+  const lowWrap = document.getElementById("lowStockList");
+  const low = useStock ? state.items.filter(i=>i.active && i.stock <= i.reorderPoint) : [];
+  lowWrap.innerHTML = (!useStock)
+    ? `<div class="tiny">在庫表示がOFFです（設定でONにできます）</div>`
+    : (low.length===0 ? `<div class="tiny">低在庫はありません</div>` :
+      low.map(i=>{
+        return `<div class="listRow">
+          <div class="main">
+            <div style="font-weight:900;">${esc(i.name)} <span class="pill">${esc(i.category)}</span></div>
+            <div class="tiny">在庫 ${i.stock}${esc(i.unit)} / 発注点 ${i.reorderPoint}${esc(i.unit)} / 推奨 ${i.reorderQty}${esc(i.unit)}</div>
+          </div>
+        </div>`;
+      }).join("")
+    );
+
+  const statusF = document.getElementById("statusFilter").value;
+  const sort = document.getElementById("sortMode").value;
+
+  let reqs = [...state.requests];
+  if(statusF !== "全て") reqs = reqs.filter(r=>r.status===statusF);
+
+  const prioRank = {"緊急":0,"高":1,"中":2,"低":3};
+  if(sort==="new") reqs.sort((a,b)=>b.createdAt-a.createdAt);
+  if(sort==="needed") reqs.sort((a,b)=>{
+    const ad = a.needed ? new Date(a.needed).getTime() : 9e15;
+    const bd = b.needed ? new Date(b.needed).getTime() : 9e15;
+    return ad - bd;
+  });
+  if(sort==="priority") reqs.sort((a,b)=>(prioRank[a.priority]??9)-(prioRank[b.priority]??9));
+
+  const list = document.getElementById("reqList");
+  list.innerHTML = reqs.length===0
+    ? `<div class="tiny">申請はありません</div>`
+    : reqs.map(r=>{
+      const date = new Date(r.createdAt).toLocaleString("ja-JP");
+      return `<div class="listRow">
+        <div class="main">
+          <div style="font-weight:900;">${esc(r.itemName)}（${r.qty}${esc(r.unit)}）</div>
+          <div class="tiny">申請: ${esc(r.user)} / 優先度: ${esc(r.priority)} / 希望納期: ${r.needed ? esc(r.needed) : "なし"}</div>
+          ${r.note ? `<div class="tiny" style="margin-top:6px;">メモ: ${esc(r.note)}</div>` : ""}
+          <div class="tiny" style="margin-top:6px;">${date}</div>
+        </div>
+        <div class="right" style="flex:0 0 auto;">
+          ${r.status==="未発注"
+            ? `<button class="btn" onclick="markDone('${r.id}')">発注済み</button>`
+            : `<button class="btnGhost" onclick="markUndone('${r.id}')">未発注に戻す</button>`
+          }
+          <button class="btnDanger" onclick="removeReq('${r.id}')">削除</button>
+        </div>
+      </div>`;
+    }).join("");
+}
+function esc(s){ return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
+
+function openModal(itemId){
+  const item = state.items.find(i=>i.id===itemId);
+  if(!item) return;
+  openItemId = itemId;
+
+  const useStock = !!state.settings.useStock;
+  const isLow = useStock && item.stock <= item.reorderPoint;
+
+  document.getElementById("mTitle").textContent = item.name;
+  document.getElementById("mMeta").textContent = `${item.category} / 単位:${item.unit} / 在庫:${useStock? item.stock+item.unit : "表示なし"} / 発注点:${item.reorderPoint}${item.unit}`;
+
+  document.getElementById("mQty").value = String(isLow ? item.reorderQty : 1);
+  document.getElementById("mPriority").value = isLow ? "高" : "中";
+  document.getElementById("mNeeded").value = "";
+  document.getElementById("mNote").value = "";
+
+  document.getElementById("modalBg").style.display = "flex";
+}
+function closeModal(){ document.getElementById("modalBg").style.display = "none"; openItemId=null; }
+
+function cooldownKey(user, itemId){ return `cool_${user}_${itemId}`; }
+function inCooldown(user, itemId){
+  const t = Number(localStorage.getItem(cooldownKey(user,itemId))||"0");
+  if(!t) return false;
+  return Date.now() - t < state.settings.cooldownSec * 1000;
+}
+function setCooldown(user, itemId){ localStorage.setItem(cooldownKey(user,itemId), String(Date.now())); }
+
+function submitReq(){
+  if(!openItemId) return;
+  const user = document.getElementById("userSelect").value;
+  if(!user){ showToast("申請者を選んでください"); return; }
+
+  const item = state.items.find(i=>i.id===openItemId);
+  if(!item){ showToast("備品が見つかりません"); return; }
+
+  if(inCooldown(user, openItemId)){
+    showToast(`連続申請を防止しました（${state.settings.cooldownSec}秒待ってください）`);
+    return;
+  }
+
+  const qty = num(document.getElementById("mQty").value, 1);
+  if(qty<=0){ showToast("数量を1以上にしてください"); return; }
+
+  const priority = document.getElementById("mPriority").value;
+  const needed = document.getElementById("mNeeded").value;
+  const note = document.getElementById("mNote").value;
+
+  state.requests.push({
+    id: uid(),
+    itemId: item.id,
+    itemName: item.name,
+    unit: item.unit,
+    qty,
+    user,
+    priority,
+    needed,
+    note,
+    status: "未発注",
+    createdAt: Date.now()
+  });
+
+  setCooldown(user, openItemId);
+  saveData();
+
+  closeModal();
+  showToast("申請しました");
+  renderAll();
+}
+
+function markDone(id){
+  const r = state.requests.find(x=>x.id===id);
+  if(!r) return;
+  r.status = "発注済み";
+  saveData(); renderAdmin(); showToast("発注済みにしました");
+}
+function markUndone(id){
+  const r = state.requests.find(x=>x.id===id);
+  if(!r) return;
+  r.status = "未発注";
+  saveData(); renderAdmin(); showToast("未発注に戻しました");
+}
+function removeReq(id){
+  state.requests = state.requests.filter(x=>x.id!==id);
+  saveData(); renderAdmin(); showToast("削除しました");
+}
+function exportCSV(){
+  const rows = [["status","item","qty","unit","user","priority","needed_by","note","created_at"]];
+  for(const r of state.requests){
+    rows.push([r.status, r.itemName, r.qty, r.unit, r.user, r.priority, r.needed || "", (r.note||"").replaceAll("\n"," "), new Date(r.createdAt).toISOString()]);
+  }
+  const csv = rows.map(row=>row.map(cell=>{
+    const s = String(cell ?? "");
+    return `"${s.replaceAll('"','""')}"`;
+  }).join(",")).join("\n");
+
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "requests.csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  showToast("CSVを書き出しました");
+}
+function resetAll(){
+  if(!confirm("本当に全削除しますか？（戻せません）")) return;
+  state.requests = [];
+  saveData(); renderAll(); showToast("全削除しました");
+}
+
+function openSettings(){
+  document.getElementById("sCooldown").value = state.settings.cooldownSec;
+  document.getElementById("sUseStock").value = state.settings.useStock ? "1" : "0";
+  document.getElementById("sUsers").value = state.users.join("\n");
+  const lines = state.items.map(i=>[i.category,i.name,i.unit,i.stock,i.reorderPoint,i.reorderQty].join(",")).join("\n");
+  document.getElementById("sItems").value = lines;
+  document.getElementById("settingsBg").style.display="flex";
+}
+function closeSettings(){ document.getElementById("settingsBg").style.display="none"; }
+function saveSettings(){
+  const cooldown = num(document.getElementById("sCooldown").value, 10);
+  state.settings.cooldownSec = Math.max(1, Math.floor(cooldown));
+  state.settings.useStock = document.getElementById("sUseStock").value === "1";
+
+  const usersText = document.getElementById("sUsers").value;
+  const users = usersText.split("\n").map(s=>s.trim()).filter(Boolean);
+  if(users.length===0){ showToast("社員が0人は不可"); return; }
+  state.users = users;
+
+  const itemsText = document.getElementById("sItems").value.trim();
+  const items = [];
+  if(itemsText){
+    const lines = itemsText.split("\n").map(s=>s.trim()).filter(Boolean);
+    for(const line of lines){
+      const parts = line.split(",").map(s=>s.trim());
+      const [category,name,unit,stock,reorderPoint,reorderQty] = parts;
+      if(!name) continue;
+      items.push({ id: uid(), category: category || "その他", name, unit: unit || "個",
+        stock: num(stock,0), reorderPoint: num(reorderPoint,0), reorderQty: Math.max(1, num(reorderQty,1)), active:true });
+    }
+  }
+  if(items.length===0){ showToast("備品が0件は不可"); return; }
+  state.items = items;
+
+  saveData();
+  closeSettings();
+  showToast("保存しました");
+  renderAll();
+}
+
+document.getElementById("q").addEventListener("input", renderItems);
+document.getElementById("catSelect").addEventListener("change", renderItems);
+document.getElementById("sortMode").addEventListener("change", renderAdmin);
+document.getElementById("statusFilter").addEventListener("change", renderAdmin);
+
+setModeText();
+renderAll();
+</script>
+</body>
+</html>
